@@ -220,6 +220,10 @@ async def _bridge_one_pending(user_ctx, pending_data: dict) -> None:
 async def bridge_pending_captures(ctx) -> None:
     """Move queued webhook captures into each user's own highlight log."""
     page = await ctx.store.query(_PENDING_COLLECTION, limit=100)
+    # Always log a heartbeat, even when the queue is empty -- this is the
+    # only way to tell "the schedule never ran" apart from "it ran and
+    # found nothing", which otherwise look identical from the outside.
+    await ctx.log(f"bridge_pending_captures: tick, {len(page.data)} pending item(s)")
     moved = 0
     for pending in page.data:
         imperal_id = pending.data.get("imperal_id", "")
@@ -232,7 +236,13 @@ async def bridge_pending_captures(ctx) -> None:
             await ctx.store.delete(_PENDING_COLLECTION, pending.id)
             moved += 1
         except Exception as exc:
-            log.warning("bridge_pending_captures: user %s failed: %s", imperal_id, exc)
+            # Use ctx.log (surfaced in the Developer Portal), not the bare
+            # python logger -- a plain log.warning() here is invisible to
+            # us and would let this bridge fail silently forever.
+            await ctx.log(
+                f"bridge_pending_captures: user {imperal_id} failed: {exc}",
+                level="error",
+            )
     if moved:
         await ctx.log(f"bridge_pending_captures: moved {moved} capture(s) into user logs")
 
