@@ -1,0 +1,728 @@
+{
+  "manifest_schema_version": 3,
+  "sdk_version": "5.9.12",
+  "app_id": "web-highlights",
+  "version": "1.0.0",
+  "name": "Web Highlights",
+  "description": "Web Highlights keeps a running log of everything you ask Webbee about while browsing -- text you highlight or screenshots you capture with the Webbee browser extension, plus her reply once it lands. A dedicated history, separate from Notes.",
+  "icon": "icon.svg",
+  "actions_explicit": true,
+  "system": false,
+  "capabilities": [
+    "web-highlights:read",
+    "web-highlights:write"
+  ],
+  "tools": [
+    {
+      "name": "list_highlights",
+      "description": "List your Web Highlights history -- things you asked Webbee about while browsing (text selections or screenshots), newest first. Filter by status ('pending' = no reply yet, 'answered' = has a reply).",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "status": {
+            "default": "",
+            "description": "Optional filter: 'pending' or 'answered'. Empty = all.",
+            "title": "Status",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Max items to return",
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "ListHighlightsParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "$defs": {
+          "HighlightAction": {
+            "description": "One thing the user asked Webbee about a web page -- a text selection\nor a screenshot -- plus Webbee's reply once it exists.\n\nLives in the USER's own store partition (collection \"highlight_actions\"),\nwritten there only by the schedule bridge (from the webhook's pending\nqueue) or by chat functions running in the user's own context -- never\ndirectly by the webhook, which only ever sees the system namespace.",
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "title": "Id"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "kind": {
+                "default": "",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subtitle": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subtitle"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "status": {
+                "default": "pending",
+                "title": "Status",
+                "type": "string"
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Url"
+              },
+              "instruction": {
+                "default": "",
+                "title": "Instruction",
+                "type": "string"
+              },
+              "content_preview": {
+                "default": "",
+                "title": "Content Preview",
+                "type": "string"
+              },
+              "heading": {
+                "default": "",
+                "title": "Heading",
+                "type": "string"
+              },
+              "context": {
+                "default": "",
+                "title": "Context",
+                "type": "string"
+              },
+              "page_title": {
+                "default": "",
+                "title": "Page Title",
+                "type": "string"
+              },
+              "page_url": {
+                "default": "",
+                "title": "Page Url",
+                "type": "string"
+              },
+              "webbee_reply": {
+                "default": "",
+                "title": "Webbee Reply",
+                "type": "string"
+              },
+              "created_at": {
+                "default": "",
+                "title": "Created At",
+                "type": "string"
+              },
+              "answered_at": {
+                "default": "",
+                "title": "Answered At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "title": "HighlightAction",
+            "type": "object",
+            "x-sdl": "entity"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/HighlightAction"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page"
+          },
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "HighlightActionList",
+        "type": "object",
+        "x-sdl": "entity-list"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "web_highlights"
+    },
+    {
+      "name": "get_highlight",
+      "description": "Get one Web Highlights entry in full -- the original selection/screenshot context and Webbee's reply if one exists.",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "action_id": {
+            "description": "HighlightAction id, from list_highlights",
+            "title": "Action Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "GetHighlightParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "One thing the user asked Webbee about a web page -- a text selection\nor a screenshot -- plus Webbee's reply once it exists.\n\nLives in the USER's own store partition (collection \"highlight_actions\"),\nwritten there only by the schedule bridge (from the webhook's pending\nqueue) or by chat functions running in the user's own context -- never\ndirectly by the webhook, which only ever sees the system namespace.",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subtitle"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "status": {
+            "default": "pending",
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "instruction": {
+            "default": "",
+            "title": "Instruction",
+            "type": "string"
+          },
+          "content_preview": {
+            "default": "",
+            "title": "Content Preview",
+            "type": "string"
+          },
+          "heading": {
+            "default": "",
+            "title": "Heading",
+            "type": "string"
+          },
+          "context": {
+            "default": "",
+            "title": "Context",
+            "type": "string"
+          },
+          "page_title": {
+            "default": "",
+            "title": "Page Title",
+            "type": "string"
+          },
+          "page_url": {
+            "default": "",
+            "title": "Page Url",
+            "type": "string"
+          },
+          "webbee_reply": {
+            "default": "",
+            "title": "Webbee Reply",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "title": "Created At",
+            "type": "string"
+          },
+          "answered_at": {
+            "default": "",
+            "title": "Answered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "HighlightAction",
+        "type": "object",
+        "x-sdl": "entity"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "web_highlights"
+    },
+    {
+      "name": "attach_reply",
+      "description": "Attach Webbee's reply to a Web Highlights entry, marking it answered. Call this right after replying in chat to something the user pasted from a Web Highlights capture (look for a 'Ref: <id>' line in what they pasted).",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "update:highlight_action"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "action_id": {
+            "description": "HighlightAction id to attach a reply to",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "reply": {
+            "description": "Webbee's reply text to attach to this highlight",
+            "minLength": 1,
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id",
+          "reply"
+        ],
+        "title": "AttachReplyParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "One thing the user asked Webbee about a web page -- a text selection\nor a screenshot -- plus Webbee's reply once it exists.\n\nLives in the USER's own store partition (collection \"highlight_actions\"),\nwritten there only by the schedule bridge (from the webhook's pending\nqueue) or by chat functions running in the user's own context -- never\ndirectly by the webhook, which only ever sees the system namespace.",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subtitle"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "status": {
+            "default": "pending",
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "instruction": {
+            "default": "",
+            "title": "Instruction",
+            "type": "string"
+          },
+          "content_preview": {
+            "default": "",
+            "title": "Content Preview",
+            "type": "string"
+          },
+          "heading": {
+            "default": "",
+            "title": "Heading",
+            "type": "string"
+          },
+          "context": {
+            "default": "",
+            "title": "Context",
+            "type": "string"
+          },
+          "page_title": {
+            "default": "",
+            "title": "Page Title",
+            "type": "string"
+          },
+          "page_url": {
+            "default": "",
+            "title": "Page Url",
+            "type": "string"
+          },
+          "webbee_reply": {
+            "default": "",
+            "title": "Webbee Reply",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "title": "Created At",
+            "type": "string"
+          },
+          "answered_at": {
+            "default": "",
+            "title": "Answered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "HighlightAction",
+        "type": "object",
+        "x-sdl": "entity"
+      },
+      "event": "web-highlights.attach_reply",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "web_highlights"
+    },
+    {
+      "name": "delete_highlight",
+      "description": "Permanently delete one Web Highlights entry.",
+      "action_type": "destructive",
+      "chain_callable": true,
+      "effects": [
+        "delete:highlight_action"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "action_id": {
+            "description": "HighlightAction id to permanently delete",
+            "title": "Action Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "title": "DeleteHighlightParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "One thing the user asked Webbee about a web page -- a text selection\nor a screenshot -- plus Webbee's reply once it exists.\n\nLives in the USER's own store partition (collection \"highlight_actions\"),\nwritten there only by the schedule bridge (from the webhook's pending\nqueue) or by chat functions running in the user's own context -- never\ndirectly by the webhook, which only ever sees the system namespace.",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "title": "Kind",
+            "type": "string"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subtitle"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "status": {
+            "default": "pending",
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "instruction": {
+            "default": "",
+            "title": "Instruction",
+            "type": "string"
+          },
+          "content_preview": {
+            "default": "",
+            "title": "Content Preview",
+            "type": "string"
+          },
+          "heading": {
+            "default": "",
+            "title": "Heading",
+            "type": "string"
+          },
+          "context": {
+            "default": "",
+            "title": "Context",
+            "type": "string"
+          },
+          "page_title": {
+            "default": "",
+            "title": "Page Title",
+            "type": "string"
+          },
+          "page_url": {
+            "default": "",
+            "title": "Page Url",
+            "type": "string"
+          },
+          "webbee_reply": {
+            "default": "",
+            "title": "Webbee Reply",
+            "type": "string"
+          },
+          "created_at": {
+            "default": "",
+            "title": "Created At",
+            "type": "string"
+          },
+          "answered_at": {
+            "default": "",
+            "title": "Answered At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "HighlightAction",
+        "type": "object",
+        "x-sdl": "entity"
+      },
+      "event": "web-highlights.delete_highlight",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "web_highlights"
+    }
+  ],
+  "signals": [],
+  "schedules": [
+    {
+      "name": "bridge_pending_captures",
+      "cron": "* * * * *"
+    }
+  ],
+  "required_scopes": [],
+  "icon_size_bytes": 299,
+  "webhooks": [
+    {
+      "path": "/capture",
+      "method": "POST",
+      "secret_header": "X-Highlights-Secret"
+    }
+  ],
+  "lifecycle": {
+    "on_install": true,
+    "health_check": {
+      "interval_sec": 60
+    }
+  },
+  "lifecycle_hooks": {
+    "on_install": {
+      "signature": "(ctx) -> 'None'"
+    }
+  },
+  "secrets": [
+    {
+      "name": "capture_shared_secret",
+      "description": "Shared secret the Webbee browser extension sends on every capture webhook call. Set this once here, then paste the SAME value into the extension's popup.",
+      "required": false,
+      "write_mode": "user",
+      "max_bytes": 256,
+      "scope": "app"
+    }
+  ],
+  "panels": [
+    {
+      "panel_id": "secrets",
+      "slot": "right",
+      "title": "Secrets",
+      "tree": {},
+      "icon": "KeyRound",
+      "refresh": "manual",
+      "center_overlay": false
+    },
+    {
+      "panel_id": "history",
+      "slot": "left",
+      "title": "Web Highlights",
+      "tree": {},
+      "icon": "",
+      "refresh": "manual",
+      "center_overlay": false
+    },
+    {
+      "panel_id": "detail",
+      "slot": "center",
+      "title": "Highlight",
+      "tree": {},
+      "icon": "",
+      "refresh": "manual",
+      "center_overlay": true
+    }
+  ]
+}
