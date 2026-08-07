@@ -201,6 +201,19 @@ async def handle_capture(ctx, headers: dict, body: str, query_params: dict) -> d
 # ──────────────────────────────────────────────────────────────────────────
 
 
+@ext.webhook("debug_pending", method="GET")
+async def debug_pending(ctx, headers: dict, body: str, query_params: dict) -> dict:
+    """TEMPORARY diagnostic -- inspect the pending_captures system queue
+    directly, to prove whether bridge_pending_captures is actually firing
+    on THIS deployed version. Remove once confirmed either way."""
+    page = await ctx.store.query(_PENDING_COLLECTION, limit=100)
+    return {
+        "status": "ok",
+        "count": len(page.data),
+        "items": [{"id": d.id, "created_at": d.data.get("created_at")} for d in page.data],
+    }
+
+
 async def _bridge_one_pending(user_ctx, pending_data: dict) -> None:
     """Per-user business logic, isolated from the ctx.as_user() fan-out
     machinery -- per the SDK testing guide, this is the piece unit tests
