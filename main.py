@@ -216,6 +216,20 @@ async def _bridge_one_pending(user_ctx, pending_data: dict) -> None:
     })
 
 
+@ext.webhook("debug_pending", method="GET")
+async def debug_pending(ctx, headers: dict, body: str, query_params: dict) -> dict:
+    """TEMPORARY diagnostic -- inspect the pending_captures system queue
+    directly, to prove whether handle_capture's write and
+    bridge_pending_captures's read see the same data. Remove once the
+    delivery-latency investigation is closed."""
+    page = await ctx.store.query(_PENDING_COLLECTION, limit=100)
+    return {
+        "status": "ok",
+        "count": len(page.data),
+        "items": [{"id": d.id, "data": d.data} for d in page.data],
+    }
+
+
 @ext.schedule("bridge_pending_captures", cron="* * * * *")
 async def bridge_pending_captures(ctx) -> None:
     """Move queued webhook captures into each user's own highlight log."""
