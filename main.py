@@ -16,22 +16,20 @@ ARCHITECTURE (why it's shaped this way):
         v
   @ext.webhook("capture")            <- runs as system identity "__webhook__"
         |  ctx.store here is a SYSTEM namespace, NOT the user's partition.
-        |  Tries ctx.as_user(imperal_id) FIRST and writes the real
-        |  HighlightAction directly into that user's own store partition,
-        |  in the same request -- the decorator-webhook-reference docs
-        |  document exactly this pattern for webhook handlers, and live
-        |  testing on 2026-08-07/08 confirmed it: it delivers a highlight
-        |  end-to-end (curl -> webhook -> chat function read) with no
-        |  extra wait at all, matching "select text -> pick action -> it's
-        |  immediately in Web Highlights". If as_user() ever raises for any
-        |  reason, this falls back to writing a "pending_captures" system
-        |  document instead (tagged with imperal_id) so nothing is lost --
-        |  see the schedule bridge below.
+        |  ctx.as_user() is NOT available here -- confirmed BOTH by the
+        |  concepts/webhooks docs ("ctx.as_user(uid) ... raises in a webhook
+        |  handler") AND by a live production test on 2026-08-08 (a direct
+        |  write attempt correctly fell back with "delivered":"queued",
+        |  proving as_user() raised exactly as documented in practice, not
+        |  just on paper). So this handler only ever queues -- it writes a
+        |  "pending_captures" system document, tagged with the user's
+        |  imperal_id, and returns immediately.
         v
-  @ext.schedule("bridge_pending_captures", cron="* * * * *")   <- safety net
-        |  Runs in system context. Sweeps any pending_captures left behind
-        |  by a failed direct write (should be rare) and bridges them into
-        |  the user's store the same way, via ctx.as_user(imperal_id).
+  @ext.schedule("bridge_pending_captures", cron="* * * * *")   <- every 60s
+        |  Runs in system context, where ctx.as_user() IS documented-safe.
+        |  Fans out over pending_captures, and for each one, writes a real
+        |  HighlightAction into THAT user's own store partition via
+        |  ctx.as_user(imperal_id).
         v
   chat functions (list_highlights / get_highlight / attach_reply / delete)
         |  Run in full user context -- normal per-user ctx.store reads/writes.
@@ -40,18 +38,21 @@ ARCHITECTURE (why it's shaped this way):
         v
   panels: History (left, list) + Detail (center)
 
-NOTE on the direct-write decision: an earlier version of this file queued
-every capture through pending_captures and relied solely on the schedule
-bridge to move it into the user's log, on the theory that ctx.as_user()
-raises unconditionally in webhook context. That theory came from one
-doc page's attribute table; a second, more specific page
-(decorator-webhook-reference) documents ctx.as_user(uid) as the supported
-way to write a specific user's data from inside a webhook handler, with a
-worked example. Live testing settled it: the schedule-only path left
-6 real captures stuck un-bridged for 20+ minutes (oldest over a day old)
-across repeated cron ticks, while the direct as_user() write delivered
-instantly and repeatedly. The queue is kept only as an explicit failure
-fallback, not the primary path.
+WHY THE SCHEDULE DIDN'T RUN FOR OVER A DAY (found + fixed 2026-08-08): six
+test captures sat unprocessed in pending_captures for 24+ hours despite
+correct code and a valid cron. A same-day detour tried switching the
+webhook to write directly via ctx.as_user() (reasoning: maybe as_user()
+IS allowed in webhook context after all) -- a live production test proved
+that wrong: the direct write fell back to "queued" exactly as the SDK's
+as_user() guard predicts (it requires imperal_id == "__system__"; a webhook
+gets "__webhook__"). The REAL root cause: per Imperal's publishing docs,
+"Once published ... you can surface panels, skeletons, and scheduled
+actions" -- @ext.schedule jobs only actually EXECUTE once an extension is
+published, not merely `deploy_app`-ed into dev/local install (confirmed:
+this app was never in the Marketplace). Fix: reverted the direct-write
+detour, bumped to 1.0.1 (bug-fix-only PATCH -- same tools/scopes, per the
+semver table this is auto-approved) and submitted for review so the
+schedule can actually fire in production.
 """
 from __future__ import annotations
 
@@ -72,7 +73,7 @@ log = logging.getLogger(__name__)
 
 ext = Extension(
     "web-highlights",
-    version="1.0.0",
+    version="1.0.1",
     display_name="Web Highlights",
     description=(
         "Web Highlights keeps a running log of everything you ask Webbee "
@@ -184,32 +185,12 @@ async def handle_capture(ctx, headers: dict, body: str, query_params: dict) -> d
         "created_at": _now_iso(),
     }
 
-    # Try the DIRECT write first -- the decorator-webhook-reference docs
-    # (not just the general webhooks concept page) explicitly list
-    # ctx.as_user(uid) as available in webhook context for exactly this use
-    # case ("write into a specific user's store partition after receiving a
-    # webhook event"). Live testing on 2026-08-07/08 proved the schedule
-    # bridge below can sit un-run for 20+ minutes with items queued since
-    # the previous day -- so the direct path is the primary delivery
-    # mechanism now, not a fallback. If it works, the capture is visible in
-    # the user's log within the same HTTP request Webbee's popup made --
-    # no wait on a cron tick at all. Only fall back to the pending queue
-    # (for bridge_pending_captures to eventually pick up) if as_user()
-    # raises for any reason, so nothing is ever silently lost either way.
-    try:
-        user_ctx = ctx.as_user(imperal_id)
-        await _bridge_one_pending(user_ctx, pending_data)
-        await ctx.log(f"capture webhook: delivered directly to {imperal_id}'s log")
-        return {"status": "ok", "delivered": "direct"}
-    except Exception as exc:
-        await ctx.log(
-            f"capture webhook: direct as_user() delivery failed ({exc}) -- queuing for schedule bridge",
-            level="warning",
-        )
-
+    # ctx.as_user() is confirmed unavailable in webhook context (see the
+    # architecture note above) -- so this always queues for the schedule
+    # bridge below, which is the one place that write is documented-safe.
     doc = await ctx.store.create(_PENDING_COLLECTION, {"imperal_id": imperal_id, **pending_data})
     await ctx.log(f"capture webhook: queued pending capture {doc.id} for {imperal_id}")
-    return {"status": "ok", "pending_id": doc.id, "delivered": "queued"}
+    return {"status": "ok", "pending_id": doc.id}
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -245,20 +226,6 @@ async def _bridge_one_pending(user_ctx, pending_data: dict) -> None:
         "created_at": pending_data.get("created_at", _now_iso()),
         "answered_at": "",
     })
-
-
-@ext.webhook("debug_pending", method="GET")
-async def debug_pending(ctx, headers: dict, body: str, query_params: dict) -> dict:
-    """TEMPORARY diagnostic -- inspect the pending_captures system queue
-    directly, to prove whether handle_capture's write and
-    bridge_pending_captures's read see the same data. Remove once the
-    delivery-latency investigation is closed."""
-    page = await ctx.store.query(_PENDING_COLLECTION, limit=100)
-    return {
-        "status": "ok",
-        "count": len(page.data),
-        "items": [{"id": d.id, "data": d.data} for d in page.data],
-    }
 
 
 @ext.schedule("bridge_pending_captures", cron="* * * * *")

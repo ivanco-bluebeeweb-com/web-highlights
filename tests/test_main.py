@@ -53,37 +53,13 @@ def _capture_body(**overrides) -> str:
 
 
 @pytest.mark.asyncio
-async def test_capture_webhook_delivers_directly_when_as_user_available():
-    """Primary path per the decorator-webhook-reference docs: ctx.as_user(uid)
-    IS documented as available in webhook context, and live testing on
-    2026-08-07/08 proved the schedule-bridge-only design left captures
-    stuck in pending_captures for over a day. So handle_capture tries the
-    direct write first."""
+async def test_capture_webhook_valid_secret_queues_pending():
+    """handle_capture ALWAYS queues -- ctx.as_user() is confirmed unavailable
+    in webhook context (concepts/webhooks docs, and a live production test
+    on 2026-08-08 where a direct-write attempt fell back to \"queued\",
+    proving the SDK's as_user() guard -- imperal_id must be \"__system__\",
+    a webhook gets \"__webhook__\" -- fires for real, not just on paper)."""
     ctx = MockContext()
-    ctx.secrets = MockSecretStore({"capture_shared_secret": "shh-secret"})
-    fake_user_ctx = MockContext(user_id="imp_u_test123")
-    ctx.as_user = lambda uid: fake_user_ctx
-
-    result = await m.handle_capture(
-        ctx, {"x-highlights-secret": "shh-secret"}, _capture_body(), {}
-    )
-
-    assert result == {"status": "ok", "delivered": "direct"}
-    assert not ctx.store._data.get("pending_captures")
-    page = await fake_user_ctx.store.query(m._ACTIONS_COLLECTION)
-    assert len(page.data) == 1
-    assert page.data[0].data["instruction"] == "Summarize this"
-    assert page.data[0].data["heading"] == "Ventilation Systems"
-
-
-@pytest.mark.asyncio
-async def test_capture_webhook_falls_back_to_pending_queue_if_as_user_fails():
-    """If as_user() ever raises (e.g. platform quirk, or this ever runs on
-    an older kernel that truly forbids it), nothing is lost -- it queues
-    for the schedule bridge exactly like the original design."""
-    ctx = MockContext()  # default user_id="test_user" -- not system context,
-    # so ctx.as_user() raises RuntimeError here exactly like real webhook
-    # context would if as_user() were ever unavailable.
     ctx.secrets = MockSecretStore({"capture_shared_secret": "shh-secret"})
 
     result = await m.handle_capture(

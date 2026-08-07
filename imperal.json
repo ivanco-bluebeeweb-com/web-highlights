@@ -2,7 +2,7 @@
   "manifest_schema_version": 3,
   "sdk_version": "5.9.12",
   "app_id": "web-highlights",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Web Highlights",
   "description": "Web Highlights keeps a running log of everything you ask Webbee about while browsing -- text you highlight or screenshots you capture with the Webbee browser extension, plus her reply once it lands. A dedicated history, separate from Notes.",
   "icon": "icon.svg",
@@ -673,11 +673,6 @@
       "path": "/capture",
       "method": "POST",
       "secret_header": "X-Highlights-Secret"
-    },
-    {
-      "path": "/debug_pending",
-      "method": "GET",
-      "secret_header": ""
     }
   ],
   "lifecycle": {
