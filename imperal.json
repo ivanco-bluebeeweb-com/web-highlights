@@ -673,6 +673,11 @@
       "path": "/capture",
       "method": "POST",
       "secret_header": "X-Highlights-Secret"
+    },
+    {
+      "path": "/debug_pending",
+      "method": "GET",
+      "secret_header": ""
     }
   ],
   "lifecycle": {

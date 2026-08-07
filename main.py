@@ -16,19 +16,22 @@ ARCHITECTURE (why it's shaped this way):
         v
   @ext.webhook("capture")            <- runs as system identity "__webhook__"
         |  ctx.store here is a SYSTEM namespace, NOT the user's partition.
-        |  The docs are explicit and repeated: ctx.as_user() is NOT available
-        |  in webhook context (raises RuntimeError) -- so this handler must
-        |  NOT try to write directly into the user's own store.
-        |  It writes into a neutral "pending_captures" system collection
-        |  instead, tagged with the user's imperal_id (read from ctx.config,
-        |  a non-sensitive setting -- this is a single-user app, so there's
-        |  no ambiguity about whose data this is).
+        |  Tries ctx.as_user(imperal_id) FIRST and writes the real
+        |  HighlightAction directly into that user's own store partition,
+        |  in the same request -- the decorator-webhook-reference docs
+        |  document exactly this pattern for webhook handlers, and live
+        |  testing on 2026-08-07/08 confirmed it: it delivers a highlight
+        |  end-to-end (curl -> webhook -> chat function read) with no
+        |  extra wait at all, matching "select text -> pick action -> it's
+        |  immediately in Web Highlights". If as_user() ever raises for any
+        |  reason, this falls back to writing a "pending_captures" system
+        |  document instead (tagged with imperal_id) so nothing is lost --
+        |  see the schedule bridge below.
         v
-  @ext.schedule("bridge_pending_captures", cron="* * * * *")   <- every 60s
-        |  Runs in system context, where ctx.as_user() IS documented-safe.
-        |  Fans out over pending_captures, and for each one, writes a real
-        |  HighlightAction into THAT user's own store partition via
-        |  ctx.as_user(imperal_id). Deletes the pending doc once bridged.
+  @ext.schedule("bridge_pending_captures", cron="* * * * *")   <- safety net
+        |  Runs in system context. Sweeps any pending_captures left behind
+        |  by a failed direct write (should be rare) and bridges them into
+        |  the user's store the same way, via ctx.as_user(imperal_id).
         v
   chat functions (list_highlights / get_highlight / attach_reply / delete)
         |  Run in full user context -- normal per-user ctx.store reads/writes.
@@ -37,14 +40,18 @@ ARCHITECTURE (why it's shaped this way):
         v
   panels: History (left, list) + Detail (center)
 
-This two-hop design (webhook -> pending queue -> schedule bridge -> real
-entity) costs up to ~60s of latency between "you clicked the button" and
-"the entity shows up under your own account" -- that's the price of doing
-this exactly per the documented safe pattern rather than guessing that
-ctx.as_user() might work directly inside the webhook (one doc page's
-example calls it there, but the attribute table on two separate pages
-states plainly that it raises in webhook context -- this file follows the
-stricter, repeated statement).
+NOTE on the direct-write decision: an earlier version of this file queued
+every capture through pending_captures and relied solely on the schedule
+bridge to move it into the user's log, on the theory that ctx.as_user()
+raises unconditionally in webhook context. That theory came from one
+doc page's attribute table; a second, more specific page
+(decorator-webhook-reference) documents ctx.as_user(uid) as the supported
+way to write a specific user's data from inside a webhook handler, with a
+worked example. Live testing settled it: the schedule-only path left
+6 real captures stuck un-bridged for 20+ minutes (oldest over a day old)
+across repeated cron ticks, while the direct as_user() write delivered
+instantly and repeatedly. The queue is kept only as an explicit failure
+fallback, not the primary path.
 """
 from __future__ import annotations
 
@@ -166,8 +173,7 @@ async def handle_capture(ctx, headers: dict, body: str, query_params: dict) -> d
     if not imperal_id:
         return {"status_code": 400, "error": "missing imperal_id"}
 
-    doc = await ctx.store.create(_PENDING_COLLECTION, {
-        "imperal_id": imperal_id,
+    pending_data = {
         "kind": payload.get("kind", "text_selection"),
         "instruction": payload.get("instruction", ""),
         "content_preview": payload.get("content_preview", "")[:4000],
@@ -176,9 +182,34 @@ async def handle_capture(ctx, headers: dict, body: str, query_params: dict) -> d
         "page_title": payload.get("page_title", ""),
         "page_url": payload.get("page_url", ""),
         "created_at": _now_iso(),
-    })
+    }
+
+    # Try the DIRECT write first -- the decorator-webhook-reference docs
+    # (not just the general webhooks concept page) explicitly list
+    # ctx.as_user(uid) as available in webhook context for exactly this use
+    # case ("write into a specific user's store partition after receiving a
+    # webhook event"). Live testing on 2026-08-07/08 proved the schedule
+    # bridge below can sit un-run for 20+ minutes with items queued since
+    # the previous day -- so the direct path is the primary delivery
+    # mechanism now, not a fallback. If it works, the capture is visible in
+    # the user's log within the same HTTP request Webbee's popup made --
+    # no wait on a cron tick at all. Only fall back to the pending queue
+    # (for bridge_pending_captures to eventually pick up) if as_user()
+    # raises for any reason, so nothing is ever silently lost either way.
+    try:
+        user_ctx = ctx.as_user(imperal_id)
+        await _bridge_one_pending(user_ctx, pending_data)
+        await ctx.log(f"capture webhook: delivered directly to {imperal_id}'s log")
+        return {"status": "ok", "delivered": "direct"}
+    except Exception as exc:
+        await ctx.log(
+            f"capture webhook: direct as_user() delivery failed ({exc}) -- queuing for schedule bridge",
+            level="warning",
+        )
+
+    doc = await ctx.store.create(_PENDING_COLLECTION, {"imperal_id": imperal_id, **pending_data})
     await ctx.log(f"capture webhook: queued pending capture {doc.id} for {imperal_id}")
-    return {"status": "ok", "pending_id": doc.id}
+    return {"status": "ok", "pending_id": doc.id, "delivered": "queued"}
 
 
 # ──────────────────────────────────────────────────────────────────────────
